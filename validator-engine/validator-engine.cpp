@@ -53,6 +53,12 @@
 #include "td/utils/TsFileLog.h"
 #include "td/utils/Random.h"
 
+#include "kafkadb/producer.hpp"
+#include "td/utils/check.h"
+#include "td/utils/int_types.h"
+#include "td/utils/logging.h"
+#include "td/utils/port/IPAddress.h"
+
 #include "auto/tl/lite_api.h"
 
 #include "memprof/memprof.h"
@@ -167,6 +173,15 @@ Config::Config(ton::ton_api::engine_validator_config &config) {
     }
   }
 
+  config_add_kafka(
+    config.kafka_config_->ip_,
+    config.kafka_config_->port_,
+    config.kafka_config_->timeout_ms_,
+    config.kafka_config_->max_bytes_,
+    config.kafka_config_->topics_->blocks_,
+    config.kafka_config_->topics_->accounts_
+  );
+
   if (config.gc_) {
     for (auto &gc : config.gc_->ids_) {
       config_add_gc(ton::PublicKeyHash{gc}).ensure();
@@ -244,14 +259,32 @@ ton::tl_object_ptr<ton::ton_api::engine_validator_config> Config::tl() const {
                                                                                        std::move(control_proc_vec)));
   }
 
+  auto conn_cfg = kafka_config.conn_cfg;
+  auto topic_cfg = kafka_config.topics_cfg;
+  auto kafka_config_tl = ton::create_tl_object<ton::ton_api::engine_kafkaConfig>();
+  kafka_config_tl->ip_ = conn_cfg.addr.is_valid() ? (int)kafka_config.conn_cfg.addr.get_ipv4() : 0;
+  kafka_config_tl->port_ = conn_cfg.addr.is_valid() ? conn_cfg.addr.get_port() : 0;
+  kafka_config_tl->timeout_ms_ = conn_cfg.timeout_ms > 0 ? conn_cfg.timeout_ms : 2000;
+  kafka_config_tl->max_bytes_ = conn_cfg.max_bytes > 0 ? conn_cfg.max_bytes : 3'000'000;
+  kafka_config_tl->topics_  = ton::create_tl_object<ton::ton_api::kafka_topics>();
+
+  kafka_config_tl->topics_->blocks_ = topic_cfg.blocks_topic.empty() 
+                                      ? "raw_blocks" // default blocks topic
+                                      : topic_cfg.blocks_topic;
+
+  kafka_config_tl->topics_->accounts_ = topic_cfg.accounts_topic.empty() 
+                                      ? "accounts-0" // default accounts topic
+                                      : topic_cfg.accounts_topic;
+
   auto gc_vec = ton::create_tl_object<ton::ton_api::engine_gc>(std::vector<td::Bits256>{});
   for (auto &id : gc) {
     gc_vec->ids_.push_back(id.tl());
   }
+
   return ton::create_tl_object<ton::ton_api::engine_validator_config>(
       out_port, std::move(addrs_vec), std::move(adnl_vec), std::move(dht_vec), std::move(val_vec), full_node.tl(),
       std::move(full_node_slaves_vec), std::move(full_node_masters_vec), std::move(full_node_config_obj),
-      std::move(liteserver_vec), std::move(control_vec), std::move(gc_vec));
+      std::move(liteserver_vec), std::move(control_vec), std::move(kafka_config_tl), std::move(gc_vec));
 }
 
 td::Result<bool> Config::config_add_network_addr(td::IPAddress in_ip, td::IPAddress out_ip,
@@ -512,6 +545,28 @@ td::Result<bool> Config::config_add_control_process(ton::PublicKeyHash key, td::
     v.clients.emplace(id, permissions);
     return true;
   }
+}
+
+td::Result<bool> Config::config_add_kafka(
+  td::int32 ip,
+  td::int32 port,
+  td::int32 timeout_ms,
+  td::int32 max_bytes,
+  td::string blocks_topic,
+  td::string accounts_topic
+) {
+  auto addr = td::IPAddress{};
+  addr.init_ipv4_port(
+    td::IPAddress::ipv4_to_str(ip), 
+    static_cast<td::uint16>(port)
+  ).ensure();
+
+  kafka_config = ton::kafkadb::producer::KafkaConfig{
+    {blocks_topic, accounts_topic},
+    {addr, timeout_ms, max_bytes}
+  };
+
+  return true;
 }
 
 td::Result<bool> Config::config_add_gc(ton::PublicKeyHash key) {
@@ -1766,13 +1821,25 @@ void ValidatorEngine::start_overlays() {
 }
 
 void ValidatorEngine::started_overlays() {
+  start_kafka();
+}
+
+void ValidatorEngine::start_kafka() {
+  kafka_manager_ = ton::kafkadb::producer::KafkaManager::create(config_.kafka_config);
+  started_kafka();
+}
+
+void ValidatorEngine::started_kafka() {
+  CHECK(!kafka_manager_->empty())
   start_validator();
 }
 
 void ValidatorEngine::start_validator() {
   validator_options_.write().set_allow_blockchain_init(config_.validators.size() > 0);
   validator_manager_ = ton::validator::ValidatorManagerFactory::create(
-      validator_options_, db_root_, keyring_.get(), adnl_.get(), rldp_.get(), overlay_manager_.get());
+    validator_options_, db_root_, keyring_.get(),adnl_.get(),
+    rldp_.get(), overlay_manager_.get(), kafka_manager_.get()
+  );
 
   for (auto &v : config_.validators) {
     td::actor::send_closure(validator_manager_, &ton::validator::ValidatorManagerInterface::add_permanent_key, v.first,

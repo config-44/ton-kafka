@@ -13,3 +13,4 @@ test/regression-tests.cache/
 **/*build*/
 .idea
 .vscode
+.cache

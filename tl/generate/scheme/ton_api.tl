@@ -546,6 +546,7 @@ validator.groupNew workchain:int shard:long vertical_seqno:int last_key_block_se
 
 ---types---
 
+kafka.topics blocks:string accounts:string = kafka.Topics;
 
 id.config.local id:PrivateKey = id.config.Local;
 dht.config.local id:adnl.id.short = dht.config.Local;
@@ -579,6 +580,7 @@ engine.validator id:int256 temp_keys:(vector engine.validatorTempKey) adnl_addrs
 engine.liteServer id:int256 port:int = engine.LiteServer;
 engine.controlProcess id:int256 permissions:int = engine.ControlProcess;
 engine.controlInterface id:int256 port:int allowed:(vector engine.controlProcess) = engine.ControlInterface; 
+engine.kafkaConfig ip:int port:int timeout_ms:int max_bytes:int topics:kafka.topics = engine.KafkaConfig;
 engine.gc ids:(vector int256) = engine.Gc;
 
 engine.dht.config dht:(vector engine.dht) gc:engine.gc = engine.dht.Config;
@@ -591,6 +593,7 @@ engine.validator.config out_port:int addrs:(vector engine.Addr) adnl:(vector eng
         fullnodemasters:(vector engine.validator.fullNodeMaster)
         fullnodeconfig:engine.validator.fullNodeConfig
         liteservers:(vector engine.liteServer) control:(vector engine.controlInterface)
+        kafka_config:engine.kafkaConfig
         gc:engine.gc = engine.validator.Config;
 
 ---functions---

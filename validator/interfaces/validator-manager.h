@@ -170,6 +170,19 @@ class ValidatorManager : public ValidatorManagerInterface {
 
   virtual void log_validator_session_stats(BlockIdExt block_id, validatorsession::ValidatorSessionStats stats) = 0;
 
+  virtual void add_block_to_kafka(
+    BlockIdExt block_id, 
+    td::Ref<ton::validator::BlockData> block_data, 
+    BlockSeqno masterchain_ref,
+    td::Ref<ShardState> state,
+    td::Promise<td::Unit> promise
+  ) = 0;
+
+  virtual void add_state_full_to_kafka(
+    td::Ref<ShardState> state,
+    td::Promise<td::Unit> promise
+  ) = 0;
+
   static bool is_persistent_state(UnixTime ts, UnixTime prev_ts) {
     return ts / (1 << 17) != prev_ts / (1 << 17);
   }
