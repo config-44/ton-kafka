@@ -27,6 +27,7 @@
 #include "td/utils/optional.h"
 
 #include <cinttypes>
+#include <sstream>
 
 namespace ton {
 
@@ -206,10 +207,26 @@ struct BlockId {
   int pfx_len() const {
     return shard_pfx_len(shard);
   }
-  std::string to_str() const {
+
+  std::string to_str(bool with_b = true) const {
     char buffer[64];
-    return std::string{buffer, (unsigned)snprintf(buffer, 63, "(%d,%016llx,%u)", workchain,
-                                                  static_cast<unsigned long long>(shard), seqno)};
+    return std::string{
+      buffer, 
+      (unsigned)snprintf(
+        buffer, 63, (with_b ? "(%d,%016llx,%u)" : "%d,%016llx,%u"), workchain,
+        static_cast<unsigned long long>(shard), seqno
+      )
+    };
+  }
+
+  std::string to_str_format() const {
+    std::stringstream ss{};
+    
+    ss << "[block_id: "
+       << this->to_str(false)
+       << "]";
+
+    return ss.str();
   }
 };
 

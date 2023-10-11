@@ -43,6 +43,10 @@
 #include "auto/tl/ton_api_json.h"
 #include "auto/tl/ton_api.hpp"
 
+#include "kafkadb/producer.hpp"
+#include "td/utils/common.h"
+#include "td/utils/port/IPAddress.h"
+
 enum ValidatorEnginePermissions : td::uint32 { vep_default = 1, vep_modify = 2, vep_unsafe = 4 };
 
 using AdnlCategory = td::uint8;
@@ -90,6 +94,8 @@ struct Config {
   std::map<td::int32, Control> controls;
   std::set<ton::PublicKeyHash> gc;
 
+  ton::kafkadb::producer::KafkaConfig kafka_config;
+
   void decref(ton::PublicKeyHash key);
   void incref(ton::PublicKeyHash key) {
     keys_refcnt[key]++;
@@ -113,6 +119,16 @@ struct Config {
   td::Result<bool> config_add_control_interface(ton::PublicKeyHash key, td::int32 port);
   td::Result<bool> config_add_control_process(ton::PublicKeyHash key, td::int32 port, ton::PublicKeyHash id,
                                               td::uint32 permissions);
+
+  td::Result<bool> config_add_kafka(
+    td::int32 ip,
+    td::int32 port,
+    td::int32 timeout_ms,
+    td::int32 max_bytes,
+    td::string blocks_topic,
+    td::string accounts_topic
+  );
+
   td::Result<bool> config_add_gc(ton::PublicKeyHash key);
   td::Result<bool> config_del_network_addr(td::IPAddress addr, std::vector<AdnlCategory> cats,
                                            std::vector<AdnlCategory> prio_cats);
@@ -148,6 +164,8 @@ class ValidatorEngine : public td::actor::Actor {
   td::actor::ActorOwn<ton::validator::fullnode::FullNode> full_node_;
   std::map<td::uint16, td::actor::ActorOwn<ton::validator::fullnode::FullNodeMaster>> full_node_masters_;
   td::actor::ActorOwn<ton::adnl::AdnlExtServer> control_ext_server_;
+
+  td::actor::ActorOwn<ton::kafkadb::producer::KafkaManager> kafka_manager_;
 
   std::string local_config_ = "";
   std::string global_config_ = "ton-global.config";
@@ -283,6 +301,9 @@ class ValidatorEngine : public td::actor::Actor {
 
   void start_overlays();
   void started_overlays();
+
+  void start_kafka();
+  void started_kafka();
 
   void start_validator();
   void started_validator();

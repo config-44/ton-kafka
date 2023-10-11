@@ -29,6 +29,9 @@
 #include "rldp/rldp.h"
 #include "token-manager.h"
 
+#include "kafkadb/producer.hpp"
+#include "ton/ton-types.h"
+
 #include <map>
 #include <set>
 #include <list>
@@ -494,9 +497,16 @@ class ValidatorManagerImpl : public ValidatorManager {
 
   ValidatorManagerImpl(td::Ref<ValidatorManagerOptions> opts, std::string db_root,
                        td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
-                       td::actor::ActorId<rldp::Rldp> rldp, td::actor::ActorId<overlay::Overlays> overlays)
-      : opts_(std::move(opts)), db_root_(db_root), keyring_(keyring), adnl_(adnl), rldp_(rldp), overlays_(overlays) {
-  }
+                       td::actor::ActorId<rldp::Rldp> rldp, td::actor::ActorId<overlay::Overlays> overlays,
+                       td::actor::ActorId<kafkadb::producer::KafkaManager> kafka_manager)
+      : 
+      opts_(std::move(opts)), 
+      db_root_(db_root), 
+      keyring_(keyring), 
+      adnl_(adnl), 
+      rldp_(rldp), 
+      overlays_(overlays),
+      kafka_manager_(kafka_manager) {}
 
  public:
   void allow_delete(BlockIdExt block_id, td::Promise<bool> promise);
@@ -542,6 +552,19 @@ class ValidatorManagerImpl : public ValidatorManager {
 
   void log_validator_session_stats(BlockIdExt block_id, validatorsession::ValidatorSessionStats stats) override;
 
+  void add_block_to_kafka(
+    BlockIdExt block_id, 
+    td::Ref<ton::validator::BlockData> block_data, 
+    BlockSeqno masterchain_ref,
+    td::Ref<ShardState> state,
+    td::Promise<td::Unit> promise
+  ) override;
+
+  void add_state_full_to_kafka(
+    td::Ref<ShardState> state,
+    td::Promise<td::Unit> promise
+  ) override;
+
  private:
   td::Timestamp resend_shard_blocks_at_;
   td::Timestamp check_waiters_at_;
@@ -581,6 +604,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::ActorId<adnl::Adnl> adnl_;
   td::actor::ActorId<rldp::Rldp> rldp_;
   td::actor::ActorId<overlay::Overlays> overlays_;
+  td::actor::ActorId<kafkadb::producer::KafkaManager> kafka_manager_;
 
   td::actor::ActorOwn<AsyncStateSerializer> serializer_;
 

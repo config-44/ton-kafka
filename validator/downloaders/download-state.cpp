@@ -21,6 +21,7 @@
 #include "common/checksum.h"
 #include "common/delay.h"
 #include "ton/ton-io.hpp"
+#include <utility>
 
 namespace ton {
 
@@ -165,17 +166,54 @@ void DownloadShardState::downloaded_shard_state(td::BufferSlice data) {
 }
 
 void DownloadShardState::checked_shard_state() {
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
+  CHECK(handle_);
+  STDOUT_DBG() << "[checked shard state here]: " << block_id_.id.to_str_format();
+
+  auto kafka_promise = td::PromiseCreator::lambda([
+      =, SelfId = actor_id(this)
+    ](td::Result<td::Unit> R) -> void {
+    
     R.ensure();
-    td::actor::send_closure(SelfId, &DownloadShardState::written_shard_state_file);
+
+    auto end_promise = td::PromiseCreator::lambda(
+      [download_shard_state_id = SelfId]
+      (td::Result<td::Unit> R) -> void {
+      R.ensure();
+    
+      td::actor::send_closure(
+        download_shard_state_id,
+        &DownloadShardState::written_shard_state_file
+      );
+    });
+
+    if (block_id_.seqno() == 0) {
+      td::actor::send_closure(
+        manager_,
+        &ValidatorManager::store_zero_state_file,
+        block_id_,
+        std::move(data_),
+        std::move(end_promise)
+      );
+    } else {
+      td::actor::send_closure(
+        manager_,
+        &ValidatorManager::store_persistent_state_file,
+        block_id_,
+        masterchain_block_id_,
+        std::move(data_),
+        std::move(end_promise)
+      );
+    }
+
+    STDOUT_DBG() << "kafka_P end";
   });
-  if (block_id_.seqno() == 0) {
-    td::actor::send_closure(manager_, &ValidatorManager::store_zero_state_file, block_id_, std::move(data_),
-                            std::move(P));
-  } else {
-    td::actor::send_closure(manager_, &ValidatorManager::store_persistent_state_file, block_id_, masterchain_block_id_,
-                            std::move(data_), std::move(P));
-  }
+
+  td::actor::send_closure(
+    manager_, 
+    &ValidatorManager::add_state_full_to_kafka, 
+    state_, 
+    std::move(kafka_promise)
+  );
 }
 
 void DownloadShardState::written_shard_state_file() {

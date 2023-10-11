@@ -30,6 +30,15 @@ set(VALIDATOR_DB_SOURCE
   db/package.cpp
 )
 
+set(VALIDATOR_KAFKA_SOURCE
+  kafkadb/common.cpp
+  kafkadb/common.hpp
+  kafkadb/parser.hpp
+  kafkadb/parser.cpp
+  kafkadb/producer.cpp
+  kafkadb/producer.hpp
+)
+
 set(VALIDATOR_HEADERS
   block-handle.hpp
   get-next-key-blocks.h
@@ -87,6 +96,7 @@ set(VALIDATOR_SOURCE
   manager.cpp
 
   ${VALIDATOR_DB_SOURCE}
+  ${VALIDATOR_KAFKA_SOURCE}
 
   ${VALIDATOR_HEADERS}
 )
@@ -108,6 +118,7 @@ set(DISK_VALIDATOR_SOURCE
   manager-disk.cpp
 
   ${VALIDATOR_DB_SOURCE}
+  ${VALIDATOR_KAFKA_SOURCE}
 )
 
 set(HARDFORK_VALIDATOR_SOURCE
@@ -127,6 +138,7 @@ set(HARDFORK_VALIDATOR_SOURCE
   manager-hardfork.cpp
 
   ${VALIDATOR_DB_SOURCE}
+  ${VALIDATOR_KAFKA_SOURCE}
 )
 
 set(FULL_NODE_SOURCE
@@ -190,13 +202,13 @@ target_include_directories(full-node PUBLIC
   )
 
 target_link_libraries(validator PRIVATE tdutils tdactor adnl rldp tl_api dht tdfec
-  overlay catchain validatorsession ton_crypto ton_block ton_db)
+  overlay catchain validatorsession ton_crypto ton_block ton_db modern-cpp-kafka-api)
 
 target_link_libraries(validator-disk PRIVATE tdutils tdactor adnl rldp tl_api dht tdfec
-  overlay catchain validatorsession ton_crypto ton_block ton_db)
+  overlay catchain validatorsession ton_crypto ton_block ton_db modern-cpp-kafka-api)
 
 target_link_libraries(validator-hardfork PRIVATE tdutils tdactor adnl rldp tl_api dht tdfec
-  overlay catchain validatorsession ton_crypto ton_block ton_db)
+  overlay catchain validatorsession ton_crypto ton_block ton_db modern-cpp-kafka-api)
 
 target_link_libraries(full-node PRIVATE tdutils tdactor adnl rldp rldp2 tl_api dht tdfec
-  overlay catchain validatorsession ton_crypto ton_block ton_db)
+  overlay catchain validatorsession ton_crypto ton_block ton_db modern-cpp-kafka-api)

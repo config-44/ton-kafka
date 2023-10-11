@@ -44,6 +44,58 @@
 #include <atomic>
 #include <type_traits>
 
+#include <iostream>
+#include <sstream>
+
+#define DBGSTR() ([&] {                               \
+    std::ostringstream ss;                            \
+    ss << "[" << __FILE__ << ":" << __LINE__ << "]";  \
+    return ss.str();                                  \
+}())
+
+#ifdef DEBUG_MODE
+#define STDOUT_DBG() DebugStream(__FILE__, __LINE__)
+#else
+#define STDOUT_DBG() DummyStream()
+#endif
+
+class DebugStream {
+private:
+  int _line;
+  std::istringstream _path;
+  std::ostringstream _buffer;
+
+public:
+  DebugStream(const char* path, int line) : _line(line), _path(path) {}
+  
+  ~DebugStream() { 
+    std::string f_token;
+    std::string filename;
+
+    while (std::getline(_path, f_token, '/')) {
+        if (!f_token.empty()) filename = f_token;
+    }
+
+    std::cout << "[" << filename 
+              << ":" << _line << "] " 
+              << _buffer.str() << std::endl; 
+  }
+
+  template <typename T>
+  DebugStream& operator<<(const T& v) {
+    _buffer << v;
+    return *this;
+  }
+};
+
+class DummyStream {
+public:
+  template <typename T>
+  DummyStream& operator<<(const T& v) {
+      return *this;
+  }
+};
+
 #define PSTR_IMPL() ::td::Logger(::td::NullLog().ref(), ::td::LogOptions::plain(), 0)
 #define PSLICE() ::td::detail::Slicify() & PSTR_IMPL()
 #define PSTRING() ::td::detail::Stringify() & PSTR_IMPL()
@@ -73,6 +125,7 @@
 
 #define LOG(level) LOG_IMPL(level, level, true, ::td::Slice())
 #define LOG_IF(level, condition) LOG_IMPL(level, level, condition, #condition)
+#define LOG_KAFKA(level) LOG_IMPL(level, level, true, "KAFKA")
 
 #define VLOG(level) LOG_IMPL(DEBUG, level, true, TD_DEFINE_STR(level))
 #define VLOG_IF(level, condition) LOG_IMPL(DEBUG, level, condition, TD_DEFINE_STR(level) " " #condition)

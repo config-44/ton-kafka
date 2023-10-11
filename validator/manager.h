@@ -17,6 +17,8 @@
     Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
+
+#include "kafkadb/producer.hpp"
 #include "validator/validator.h"
 #include "adnl/adnl.h"
 #include "rldp/rldp.h"
@@ -32,7 +34,8 @@ class ValidatorManagerFactory {
                                                                td::actor::ActorId<keyring::Keyring> keyring,
                                                                td::actor::ActorId<adnl::Adnl> adnl,
                                                                td::actor::ActorId<rldp::Rldp> rldp,
-                                                               td::actor::ActorId<overlay::Overlays> overlays);
+                                                               td::actor::ActorId<overlay::Overlays> overlays,
+                                                               td::actor::ActorId<kafkadb::producer::KafkaManager> kafka_manager);
 };
 
 }  // namespace validator

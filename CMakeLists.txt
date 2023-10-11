@@ -96,6 +96,7 @@ else()
 endif()
 option(TON_USE_ROCKSDB "Use \"ON\" to enable RocksDb." ${NOT_TON_ONLY_TONLIB})
 option(TON_USE_ABSEIL "Use \"ON\" to enable Abseil." ${NOT_TON_ONLY_TONLIB})
+option(TON_USE_KAFKA "Use \"ON\" to enable Kafka." ${NOT_TON_ONLY_TONLIB})
 option(TON_USE_JEMALLOC "Use \"ON\" to enable JeMalloc." OFF)
 #END internal
 
@@ -120,6 +121,14 @@ if (TON_USE_ABSEIL)
   add_subdirectory(third-party/abseil-cpp EXCLUDE_FROM_ALL)
   set(ABSL_FOUND 1)
 endif()
+
+if (TON_USE_KAFKA) 
+  message("Add modern-cpp-kafka")
+  add_subdirectory(third-party/modern-cpp-kafka EXCLUDE_FROM_ALL)
+  add_compile_definitions(TON_USE_KAFKA=1)
+endif()
+
+add_compile_definitions("DEBUG_MODE=$<CONFIG:Debug>")
 
 #add_subdirectory(third-party/libcuckoo EXCLUDE_FROM_ALL)
 #add_subdirectory(third-party/junction EXCLUDE_FROM_ALL)

@@ -47,9 +47,55 @@
 
 #include <fstream>
 
+#include "errorcode.h"
+#include "interfaces/validator-manager.h"
+#include "kafkadb/producer.hpp"
+#include "td/utils/Status.h"
+#include "td/utils/check.h"
+#include "td/utils/common.h"
+#include "td/utils/logging.h"
+#include <algorithm>
+#include <iostream>
+
 namespace ton {
 
 namespace validator {
+
+void ValidatorManagerImpl::add_block_to_kafka(
+  BlockIdExt block_id, 
+  td::Ref<ton::validator::BlockData> block_data, 
+  BlockSeqno masterchain_ref,
+  td::Ref<ShardState> state,
+  td::Promise<td::Unit> promise
+) {
+  CHECK(block_data.not_null())                
+  CHECK(!kafka_manager_.empty())
+
+  td::actor::send_closure(
+    kafka_manager_,
+    &kafkadb::producer::KafkaManager::produce_raw_block,
+    block_id,
+    masterchain_ref,
+    std::move(block_data),
+    std::move(state),
+    std::move(promise)
+  );
+}
+
+void ValidatorManagerImpl::add_state_full_to_kafka(
+  td::Ref<ShardState> state,
+  td::Promise<td::Unit> promise
+) {
+  CHECK(state.not_null())                
+  CHECK(!kafka_manager_.empty())
+
+  td::actor::send_closure(
+    kafka_manager_,
+    &kafkadb::producer::KafkaManager::produce_full_state,
+    std::move(state),
+    std::move(promise)
+  );
+}
 
 void ValidatorManagerImpl::validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id,
                                                         td::BufferSlice proof, td::Promise<td::Unit> promise) {
@@ -206,7 +252,9 @@ void ValidatorManagerImpl::validate_block(ReceivedBlock block, td::Promise<Block
           td::actor::send_closure(SelfId, &ValidatorManager::get_block_handle, id, true, std::move(promise));
         }
       });
-  run_apply_block_query(block.id, pp.move_as_ok(), block.id, actor_id(this), td::Timestamp::in(10.0), std::move(P));
+
+  // NOTE: timestamp in 10.0 by default, but 600.0 with kafka
+  run_apply_block_query(block.id, pp.move_as_ok(), block.id, actor_id(this), td::Timestamp::in(600.0), std::move(P));
 }
 
 void ValidatorManagerImpl::prevalidate_block(BlockBroadcast broadcast, td::Promise<td::Unit> promise) {
@@ -1067,6 +1115,9 @@ void ValidatorManagerImpl::get_cell_db_reader(td::Promise<std::shared_ptr<vm::Ce
 
 void ValidatorManagerImpl::store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                                        td::BufferSlice state, td::Promise<td::Unit> promise) {
+  
+  STDOUT_DBG() << "[persistent state downloaded]: block id - " << block_id.id.to_str_format();
+
   td::actor::send_closure(db_, &Db::store_persistent_state_file, block_id, masterchain_block_id, std::move(state),
                           std::move(promise));
 }
@@ -1248,20 +1299,110 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
   }
 }
 
-void ValidatorManagerImpl::new_block(BlockHandle handle, td::Ref<ShardState> state, td::Promise<td::Unit> promise) {
+void ValidatorManagerImpl::new_block(
+  BlockHandle handle, 
+  td::Ref<ShardState> state, 
+  td::Promise<td::Unit> promise
+) {
+  CHECK(state->get_block_id() == handle->id())
+
   if (handle->is_applied()) {
-    return new_block_cont(std::move(handle), std::move(state), std::move(promise));
+    return new_block_cont(
+      std::move(handle), 
+      std::move(state), 
+      std::move(promise)
+    );
   } else {
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle, state = std::move(state),
-                                         promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+    STDOUT_DBG() << "[ValidatorManagerImpl::new_block]: " << handle->id().id.to_str_format();
+
+    if (handle->id().seqno() == 0) {
+      auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle, state = std::move(state),
+                                          promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+        if (R.is_error()) {
+          promise.set_error(R.move_as_error());
+        } else {
+          td::actor::send_closure(SelfId, &ValidatorManagerImpl::new_block_cont, std::move(handle), std::move(state),
+                                  std::move(promise));
+        }
+      });
+      td::actor::send_closure(db_, &Db::apply_block, handle, std::move(P));
+      return;
+    }
+
+    auto kafka_promise = td::PromiseCreator::lambda([
+      SelfId = actor_id(this),
+      block_id = handle->id().id,
+      main_promise = std::move(promise),
+      handle = handle,
+      state = state,
+      db_actor_id = db_.get()
+    ](td::Result<td::Unit> R) mutable {
       if (R.is_error()) {
-        promise.set_error(R.move_as_error());
-      } else {
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::new_block_cont, std::move(handle), std::move(state),
-                                std::move(promise));
+        main_promise.set_error(R.move_as_error());
+        return;
       }
+      
+      STDOUT_DBG() << block_id.to_str_format() << " kafka block done, going to Db::apply_block";
+
+      auto apply_block_promise = td::PromiseCreator::lambda([
+        SelfId = std::move(SelfId), 
+        handle = handle, 
+        state = std::move(state),
+        main_promise = std::move(main_promise)
+      ](td::Result<td::Unit> R) mutable {
+        if (R.is_error()) {
+          main_promise.set_error(R.move_as_error());
+          return;
+        }
+
+        td::actor::send_closure(
+          SelfId,
+          &ValidatorManagerImpl::new_block_cont, 
+          std::move(handle), 
+          std::move(state), 
+          std::move(main_promise)
+        );
+      });
+
+      td::actor::send_closure(
+        db_actor_id, 
+        &Db::apply_block, 
+        std::move(handle), 
+        std::move(apply_block_promise)
+      );
     });
-    td::actor::send_closure(db_, &Db::apply_block, handle, std::move(P));
+
+    auto get_block_promise = td::PromiseCreator::lambda([
+      SelfId = actor_id(this),
+      kafka_promise = std::move(kafka_promise),
+      handle = handle,
+      state = state
+    ](td::Result<td::Ref<ton::validator::BlockData>> R) mutable {
+      if (R.is_error()) {
+        auto r = R.move_as_error();
+        auto msg = "Failed to get block data while Kafka block preparing: " + r.to_string();
+        kafka_promise.set_error(td::Status::Error(ErrorCode::notready, msg));
+        return;
+      }
+      
+      td::actor::send_closure(
+        SelfId, 
+        &ValidatorManager::add_block_to_kafka, 
+        handle->id(),   // block_id_ext
+        R.move_as_ok(), // block_data
+        handle->masterchain_ref_block(),
+        std::move(state),
+        std::move(kafka_promise)
+      );
+    });
+    
+    // get the data buffer for a specific block
+    td::actor::send_closure(
+      actor_id(this),
+      &ValidatorManager::get_block_data_from_db,
+      std::move(handle),
+      std::move(get_block_promise)
+    );
   }
 }
 
@@ -2605,9 +2746,9 @@ void ValidatorManagerImpl::log_validator_session_stats(BlockIdExt block_id,
 td::actor::ActorOwn<ValidatorManagerInterface> ValidatorManagerFactory::create(
     td::Ref<ValidatorManagerOptions> opts, std::string db_root, td::actor::ActorId<keyring::Keyring> keyring,
     td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp::Rldp> rldp,
-    td::actor::ActorId<overlay::Overlays> overlays) {
+    td::actor::ActorId<overlay::Overlays> overlays, td::actor::ActorId<kafkadb::producer::KafkaManager> kafka_manager) {
   return td::actor::create_actor<validator::ValidatorManagerImpl>("manager", std::move(opts), db_root, keyring, adnl,
-                                                                  rldp, overlays);
+                                                                  rldp, overlays, kafka_manager);
 }
 
 }  // namespace validator
