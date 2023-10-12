@@ -4,7 +4,6 @@
 #include "td/utils/common.h"
 #include "td/utils/filesystem.h"
 #include "vm/boc.h"
-#include <__chrono/duration.h>
 #include <chrono>
 #include <iomanip>
 #include <utility>
